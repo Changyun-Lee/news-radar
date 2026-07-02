@@ -1,0 +1,7 @@
+.env
+*.env
+api_keys*
+*secret*
+__pycache__/
+*.pyc
+output/
