@@ -1,0 +1,5 @@
+kbeauty | "K-beauty" OR "Korean skincare" OR "Korean cosmetics"
+kfood | "K-food" OR "Korean food" OR "Korean snack" OR "Korean beverage" OR "Korean ramen"
+channel | (Target OR Ulta OR Sephora OR Walmart OR Amazon OR "TikTok Shop" OR Costco) AND ("K-beauty" OR "Korean skincare" OR "Korean food")
+strategy | ("Korean beauty" OR "Korean food") AND (launch OR expansion OR "shelf space" OR investment OR distribution OR partnership)
+

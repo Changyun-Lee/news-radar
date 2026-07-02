@@ -1,0 +1,59 @@
+name: Domestic news radar
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: news-radar-state
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+      NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+      KSKILL_PROXY_BASE_URL: ${{ secrets.KSKILL_PROXY_BASE_URL }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      SEND_TELEGRAM: ${{ secrets.SEND_TELEGRAM }}
+      STAGE1_MODEL: ${{ secrets.STAGE1_MODEL }}
+      STAGE2_MODEL: ${{ secrets.STAGE2_MODEL }}
+      RUN_ONCE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: KST window gate
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          from datetime import datetime, timedelta, timezone
+          hour = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=9))).hour
+          print(f"RUN_NEWS_RADAR={1 if 7 <= hour < 23 else 0}")
+          PY
+      - name: Run domestic radar
+        if: env.RUN_NEWS_RADAR == '1'
+        run: python -m news_radar.worker --source domestic
+      - name: Commit state
+        if: env.RUN_NEWS_RADAR == '1'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- data prompts; then
+            echo "No state changes"
+            exit 0
+          fi
+          git add data prompts
+          git commit -m "Update news radar state"
+          for i in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep 5
+          done
+          exit 1
+
