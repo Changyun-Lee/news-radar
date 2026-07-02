@@ -2,20 +2,9 @@ from __future__ import annotations
 
 from .config import Settings
 from .http import post_json
-from .models import JsonObject, JsonValue
+from .json_helpers import list_or_empty, object_or_empty
+from .models import JsonObject
 from .store import SeenStore
-
-
-def _as_list(value: JsonValue) -> list[JsonValue]:
-    if isinstance(value, list):
-        return value
-    return []
-
-
-def _as_object(value: JsonValue) -> JsonObject:
-    if isinstance(value, dict):
-        return value
-    return {}
 
 
 def collect_feedback(settings: Settings, store: SeenStore) -> int:
@@ -26,15 +15,15 @@ def collect_feedback(settings: Settings, store: SeenStore) -> int:
     offset = int(offset_raw) if offset_raw else 0
     payload: JsonObject = {"offset": offset, "timeout": 0, "allowed_updates": ["callback_query"]}
     data = post_json(f"https://api.telegram.org/bot{settings.telegram_bot_token}/getUpdates", payload)
-    updates = _as_list(data.get("result"))
+    updates = list_or_empty(data.get("result"))
     saved = 0
     max_update_id = offset - 1
     for update_value in updates:
-        update = _as_object(update_value)
+        update = object_or_empty(update_value)
         update_id_value = update.get("update_id")
         if isinstance(update_id_value, int):
             max_update_id = max(max_update_id, update_id_value)
-        callback = _as_object(update.get("callback_query"))
+        callback = object_or_empty(update.get("callback_query"))
         callback_id = callback.get("id")
         data_value = callback.get("data")
         if not isinstance(data_value, str) or not data_value.startswith("fb:"):

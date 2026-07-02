@@ -27,13 +27,15 @@ jobs:
       RUN_ONCE: "1"
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - name: Run overseas radar
-        run: python -m news_radar.worker --source overseas
+        run: python3 -m news_radar.worker --source overseas
       - name: Commit state
+        if: always()
         run: |
+          if [ ! -d data ]; then
+            echo "No data directory"
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if git diff --quiet -- data prompts; then
@@ -43,7 +45,15 @@ jobs:
           git add data prompts
           git commit -m "Update news radar state"
           for i in 1 2 3; do
-            git pull --rebase && git push && exit 0
+            git rebase --abort 2>/dev/null || true
+            if git pull --rebase && git push; then
+              exit 0
+            fi
+            if git status --porcelain | grep -Eq '^(AA|AU|UA|DU|UD|UU) data/monitor\.sqlite3'; then
+              git checkout --theirs data/monitor.sqlite3
+              git add data/monitor.sqlite3
+              GIT_EDITOR=true git rebase --continue && git push && exit 0
+            fi
             sleep 5
           done
           exit 1

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 import json
 import sqlite3
@@ -88,28 +89,33 @@ class SeenStore:
         self.conn.close()
 
     def prune(self) -> None:
+        today = datetime.now(timezone.utc).date().isoformat()
+        if self.get_state("last_pruned") == today:
+            return
         with self.conn:
             self.conn.execute("DELETE FROM seen_items WHERE first_seen_at < datetime('now', '-30 days')")
             self.conn.execute("DELETE FROM judgments WHERE judged_at < datetime('now', '-30 days')")
             self.conn.execute("DELETE FROM feedback WHERE at < datetime('now', '-90 days')")
+            self.conn.execute(
+                "INSERT INTO worker_state(key, value) VALUES('last_pruned', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (today,),
+            )
 
     def is_first_run(self, source: Source) -> bool:
-        key = f"initialized:{source}"
-        row = self.conn.execute("SELECT value FROM worker_state WHERE key = ?", (key,)).fetchone()
+        row = self.conn.execute("SELECT value FROM worker_state WHERE key = ?", (f"initialized:{source}",)).fetchone()
         return row is None
 
     def mark_initialized(self, source: Source) -> None:
-        key = f"initialized:{source}"
         with self.conn:
-            self.conn.execute("INSERT OR REPLACE INTO worker_state(key, value) VALUES(?, CURRENT_TIMESTAMP)", (key,))
+            self.conn.execute("INSERT OR IGNORE INTO worker_state(key, value) VALUES(?, CURRENT_TIMESTAMP)", (f"initialized:{source}",))
 
     def get_state(self, key: str) -> str | None:
         row = self.conn.execute("SELECT value FROM worker_state WHERE key = ?", (key,)).fetchone()
-        if row is None:
-            return None
-        return str(row[0])
+        return None if row is None else str(row[0])
 
     def set_state(self, key: str, value: str) -> None:
+        if self.get_state(key) == value:
+            return
         with self.conn:
             self.conn.execute("INSERT OR REPLACE INTO worker_state(key, value) VALUES(?, ?)", (key, value))
 
@@ -195,6 +201,10 @@ class SeenStore:
                 """,
                 (decision, row_id),
             )
+
+    def delete_judgment(self, row_id: int) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM judgments WHERE id = ?", (row_id,))
 
     def get_recent_history(self, source: Source, stream: str, days: int, limit: int) -> list[JsonObject]:
         rows = self.conn.execute(

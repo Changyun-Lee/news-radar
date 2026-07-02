@@ -1,33 +1,9 @@
 from __future__ import annotations
 
-from datetime import timezone
-from email.utils import parsedate_to_datetime
-import html
-import re
-from typing import Final
-
-from .config import Company, Settings
+from .config import Company, Settings, load_companies
 from .http import get_json
-from .models import Item, JsonObject, JsonValue
-
-
-TAG_RE: Final = re.compile(r"<[^>]+>")
-
-
-def clean_text(value: str) -> str:
-    return html.unescape(TAG_RE.sub("", value)).strip()
-
-
-def parse_pub_date(value: str) -> str:
-    if not value:
-        return ""
-    try:
-        dt = parsedate_to_datetime(value)
-    except (TypeError, ValueError):
-        return value
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc).isoformat()
+from .models import CollectionResult, Item, JsonObject, JsonValue
+from .text import clean_text, parse_pub_date
 
 
 def text_field(raw: JsonObject, key: str) -> str:
@@ -81,6 +57,23 @@ class NaverNewsClient:
         return object_items(data.get("items"))
 
 
+def collect_domestic(settings: Settings) -> CollectionResult:
+    client = NaverNewsClient(settings)
+    if not client.enabled():
+        print("[domestic:skip] Naver credentials/proxy missing", flush=True)
+        return CollectionResult([], attempted=False)
+    items: list[Item] = []
+    for company in load_companies(settings.companies_file):
+        try:
+            company_items = collect_company_news(client, company)
+        except (RuntimeError, OSError, TimeoutError) as exc:
+            print(f"[domestic:error] stream={company.name} {exc}", flush=True)
+            continue
+        print(f"[domestic] stream={company.name} collected={len(company_items)}", flush=True)
+        items.extend(company_items)
+    return CollectionResult(items, attempted=True)
+
+
 def collect_company_news(client: NaverNewsClient, company: Company) -> list[Item]:
     query = company.aliases[0]
     items: list[Item] = []
@@ -89,9 +82,9 @@ def collect_company_news(client: NaverNewsClient, company: Company) -> list[Item
         description = clean_text(text_field(raw, "description"))
         link = text_field(raw, "link")
         original_link = text_field(raw, "originallink") or text_field(raw, "original_link")
-        published_at = text_field(raw, "pub_date_iso") or parse_pub_date(
-            text_field(raw, "pubDate") or text_field(raw, "pub_date")
-        )
+        pub_date_raw = text_field(raw, "pubDate") or text_field(raw, "pub_date")
+        pub_date = parse_pub_date(pub_date_raw)
+        published_at = text_field(raw, "pub_date_iso") or (pub_date.isoformat() if pub_date else pub_date_raw)
         url = original_link or link
         if not title or not url:
             continue

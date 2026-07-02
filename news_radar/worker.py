@@ -1,22 +1,29 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from dataclasses import dataclass
 import time
-from typing import assert_never
-from urllib import error
-import xml.etree.ElementTree as ET
+from typing import Final, assert_never
 
-from .config import Settings, load_companies, load_overseas_queries, load_settings
+from .config import Settings, load_settings
 from .console import configure_utf8_output
 from .feedback import collect_feedback
-from .google_news import collect_query
+from .google_news import collect_overseas
 from .judge import CallLimitReached, CallLimiter, OpenRouterJudge
-from .models import ArticleJudgment, Item, Source, Stage2Failure
-from .naver import NaverNewsClient, collect_company_news
+from .models import ArticleJudgment, CollectionResult, Item, Source, Stage2Failure
+from .naver import collect_domestic
 from .records import skip_record, stage1_record, stage2_record
 from .store import SeenStore
 from .telegram import TelegramClient
+
+
+Collector = Callable[[Settings], CollectionResult]
+COLLECTORS: Final[dict[Source, Collector]] = {
+    "domestic": collect_domestic,
+    "overseas": collect_overseas,
+}
+ALL_SOURCES: Final = "all"
 
 
 @dataclass(slots=True)
@@ -27,7 +34,10 @@ class RunStats:
     skipped: int = 0
     sent: int = 0
     budget_skipped: int = 0
+    circuit_skipped: int = 0
     errors: int = 0
+    consecutive_judge_errors: int = 0
+    llm_circuit_open: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,34 +50,17 @@ class Runtime:
     criteria_text: str
 
 
-def collect_domestic(settings: Settings) -> list[Item]:
-    client = NaverNewsClient(settings)
-    if not client.enabled():
-        print("[domestic:skip] Naver credentials/proxy missing", flush=True)
-        return []
-    items: list[Item] = []
-    for company in load_companies(settings.companies_file):
-        try:
-            company_items = collect_company_news(client, company)
-        except (RuntimeError, OSError, error.URLError) as exc:
-            print(f"[domestic:error] stream={company.name} {exc}", flush=True)
-            continue
-        print(f"[domestic] stream={company.name} collected={len(company_items)}", flush=True)
-        items.extend(company_items)
-    return items
+def record_judge_error(stats: RunStats, item: Item, stage: int, exc: RuntimeError | OSError) -> None:
+    stats.errors += 1
+    stats.consecutive_judge_errors += 1
+    print(f"[llm:error] stage={stage} source={item.source} stream={item.stream} {exc}", flush=True)
+    if stats.consecutive_judge_errors >= 3:
+        stats.llm_circuit_open = True
+        print("[llm:circuit-open] consecutive judge errors reached 3", flush=True)
 
 
-def collect_overseas(settings: Settings) -> list[Item]:
-    items: list[Item] = []
-    for query in load_overseas_queries(settings.overseas_queries_file):
-        try:
-            query_items = collect_query(query)
-        except (ET.ParseError, OSError, error.URLError) as exc:
-            print(f"[overseas:error] stream={query.stream} {exc}", flush=True)
-            continue
-        print(f"[overseas] stream={query.stream} collected={len(query_items)}", flush=True)
-        items.extend(query_items)
-    return items
+def record_judge_success(stats: RunStats) -> None:
+    stats.consecutive_judge_errors = 0
 
 
 def process_item(runtime: Runtime, item: Item, seed_only: bool, stats: RunStats) -> None:
@@ -86,16 +79,20 @@ def process_item(runtime: Runtime, item: Item, seed_only: bool, stats: RunStats)
         stats.skipped += 1
         print(f"[llm:skip] {item.source} | {item.stream} | OPENROUTER_API_KEY missing | {item.title}", flush=True)
         return
+    if stats.llm_circuit_open:
+        stats.circuit_skipped += 1
+        print(f"[llm:circuit-open] {item.source} | {item.stream} | {item.title}", flush=True)
+        return
     try:
-        stage1 = runtime.judge.judge_relevance(item, runtime.limiter)
+        stage1 = runtime.judge.judge_relevance(item, runtime.criteria_text, runtime.limiter)
     except CallLimitReached:
         stats.budget_skipped += 1
         print(f"[budget:skip] {item.source} | {item.stream} | {item.title}", flush=True)
         return
-    except RuntimeError as exc:
-        stats.errors += 1
-        print(f"[llm:error] stage=1 source={item.source} stream={item.stream} {exc}", flush=True)
+    except (RuntimeError, OSError) as exc:
+        record_judge_error(stats, item, 1, exc)
         return
+    record_judge_success(stats)
     if not stage1.relevant:
         runtime.store.add_seen(item)
         runtime.store.record_judgment(stage1_record(runtime.settings, item, stage1, "stage1_irrelevant"))
@@ -110,23 +107,32 @@ def process_item(runtime: Runtime, item: Item, seed_only: bool, stats: RunStats)
         stats.budget_skipped += 1
         print(f"[budget:skip] {item.source} | {item.stream} | stage=2 | {item.title}", flush=True)
         return
-    except RuntimeError as exc:
-        stats.errors += 1
-        print(f"[llm:error] stage=2 source={item.source} stream={item.stream} {exc}", flush=True)
+    except (RuntimeError, OSError) as exc:
+        record_judge_error(stats, item, 2, exc)
         return
-    runtime.store.add_seen(item)
+    record_judge_success(stats)
     should_send, decision = runtime.judge.should_send(stage1, stage2)
-    row_id = runtime.store.record_judgment(stage2_record(runtime.settings, item, stage1, stage2, decision))
-    stats.new += 1
     if not should_send:
+        runtime.store.add_seen(item)
+        runtime.store.record_judgment(stage2_record(runtime.settings, item, stage1, stage2, decision))
+        stats.new += 1
         stats.skipped += 1
         print(f"[stage2:skip] {item.source} | {item.stream} | {decision} | {item.title}", flush=True)
         return
     match stage2:
         case ArticleJudgment() as judgment:
-            runtime.telegram.send_judgment(row_id, item, judgment)
+            row_id = runtime.store.record_judgment(stage2_record(runtime.settings, item, stage1, stage2, decision))
+            try:
+                runtime.telegram.send_judgment(row_id, item, judgment)
+            except (OSError, TimeoutError) as exc:
+                runtime.store.delete_judgment(row_id)
+                stats.errors += 1
+                print(f"[telegram:error] source={item.source} stream={item.stream} row_id={row_id} {exc}", flush=True)
+                return
+            runtime.store.add_seen(item)
             runtime.store.mark_notified(item)
             runtime.store.mark_judgment_sent(row_id, decision)
+            stats.new += 1
             stats.sent += 1
             print(f"[send] {item.source} | {item.stream} | row_id={row_id} | {item.title}", flush=True)
         case Stage2Failure():
@@ -136,21 +142,18 @@ def process_item(runtime: Runtime, item: Item, seed_only: bool, stats: RunStats)
 
 
 def selected_sources(raw_source: str) -> tuple[Source, ...]:
-    if raw_source == "all":
-        return ("domestic", "overseas")
-    if raw_source == "domestic":
-        return ("domestic",)
-    return ("overseas",)
+    if raw_source == ALL_SOURCES:
+        return tuple(COLLECTORS)
+    if raw_source in COLLECTORS:
+        return (raw_source,)
+    raise ValueError(f"Unknown source: {raw_source}")
 
 
-def collect_source(source: Source, settings: Settings) -> list[Item]:
-    match source:
-        case "domestic":
-            return collect_domestic(settings)
-        case "overseas":
-            return collect_overseas(settings)
-        case unreachable:
-            assert_never(unreachable)
+def collect_source(source: Source, settings: Settings) -> CollectionResult:
+    collector = COLLECTORS.get(source)
+    if collector is None:
+        raise ValueError(f"Unknown source: {source}")
+    return collector(settings)
 
 
 def run_once(raw_source: str) -> RunStats:
@@ -158,32 +161,39 @@ def run_once(raw_source: str) -> RunStats:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     store = SeenStore(settings.data_dir / "monitor.sqlite3")
     stats = RunStats()
+    limiter = CallLimiter(settings.max_llm_calls_per_run)
     try:
         store.prune()
-        collect_feedback(settings, store)
+        try:
+            collect_feedback(settings, store)
+        except (RuntimeError, OSError, TimeoutError, ValueError) as exc:
+            stats.errors += 1
+            print(f"[feedback:error] {exc}", flush=True)
         criteria_text = settings.criteria_file.read_text(encoding="utf-8")
         runtime = Runtime(
             settings=settings,
             store=store,
             telegram=TelegramClient(settings),
             judge=OpenRouterJudge(settings),
-            limiter=CallLimiter(settings.max_llm_calls_per_run),
+            limiter=limiter,
             criteria_text=criteria_text,
         )
         for source in selected_sources(raw_source):
-            seed_only = store.is_first_run(source) and settings.first_run_mode == "seed"
-            items = collect_source(source, settings)
-            stats.collected += len(items)
-            for item in items:
+            is_first_run = store.is_first_run(source)
+            seed_only = is_first_run and settings.first_run_mode == "seed"
+            result = collect_source(source, settings)
+            stats.collected += len(result.items)
+            for item in result.items:
                 process_item(runtime, item, seed_only, stats)
-            store.mark_initialized(source)
+            if is_first_run and result.attempted:
+                store.mark_initialized(source)
     finally:
         store.close()
     print(
         "[done] "
         f"source={raw_source} collected={stats.collected} new={stats.new} seeded={stats.seeded} "
         f"sent={stats.sent} skipped={stats.skipped} budget_skipped={stats.budget_skipped} "
-        f"llm_calls={runtime.limiter.used if 'runtime' in locals() else 0} errors={stats.errors}",
+        f"circuit_skipped={stats.circuit_skipped} llm_calls={limiter.used} errors={stats.errors}",
         flush=True,
     )
     return stats
@@ -191,7 +201,7 @@ def run_once(raw_source: str) -> RunStats:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", choices=("domestic", "overseas", "all"), default="all")
+    parser.add_argument("--source", choices=(*COLLECTORS, ALL_SOURCES), default=ALL_SOURCES)
     return parser.parse_args()
 
 

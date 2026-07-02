@@ -1,35 +1,37 @@
 from __future__ import annotations
 
 import json
-from urllib import error
 
 from .config import load_settings
 from .console import configure_utf8_output
-from .http import post_json
-from .judge import OPENROUTER_URL
+from .json_helpers import extract_fenced_text
 from .models import JsonObject
+from .openrouter import message_content, post_openrouter
 from .store import SeenStore
 
 
-def _message_content(response: JsonObject) -> str:
-    choices = response.get("choices")
-    if not isinstance(choices, list) or not choices:
-        raise RuntimeError("OpenRouter response did not include choices")
-    first = choices[0]
-    if not isinstance(first, dict):
-        raise RuntimeError("OpenRouter choice was not an object")
-    message = first.get("message")
-    if not isinstance(message, dict):
-        raise RuntimeError("OpenRouter message was not an object")
-    content = message.get("content")
-    if isinstance(content, str):
-        return content.strip()
-    raise RuntimeError("OpenRouter response content was not text")
-
-
 def cap_lines(text: str, limit: int = 40) -> str:
-    lines = [line.rstrip() for line in text.strip().splitlines() if line.strip()]
-    return "\n".join(lines[:limit]).strip() + "\n"
+    lines = [line.rstrip() for line in text.strip().splitlines()]
+    capped = "\n".join(lines[:limit]).strip()
+    return f"{capped}\n" if capped else ""
+
+
+def validation_error(text: str) -> str | None:
+    lines = text.splitlines()
+    meaningful_lines = [line for line in lines if line.strip()]
+    headers = {line.strip() for line in lines if line.strip().startswith("#")}
+    if len(meaningful_lines) < 10:
+        return "criteria must contain at least 10 non-empty lines"
+    if "# 해외" not in headers or "# 국내" not in headers:
+        return "criteria must include # 해외 and # 국내 headers"
+    return None
+
+
+def validated_criteria_text(raw_text: str) -> str | None:
+    candidate = cap_lines(extract_fenced_text(raw_text))
+    if validation_error(candidate) is not None:
+        return None
+    return candidate
 
 
 def main() -> None:
@@ -65,17 +67,12 @@ def main() -> None:
         ],
         "temperature": 0.2,
     }
-    try:
-        response = post_json(
-            OPENROUTER_URL,
-            payload,
-            headers={"Authorization": f"Bearer {settings.openrouter_api_key}"},
-            timeout=60,
-        )
-    except error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"OpenRouter API error {exc.code}: {detail}") from exc
-    settings.criteria_file.write_text(cap_lines(_message_content(response)), encoding="utf-8")
+    response = post_openrouter(settings.openrouter_api_key, payload, timeout=60)
+    next_text = validated_criteria_text(message_content(response))
+    if next_text is None:
+        print("[distill:rejected] criteria validation failed", flush=True)
+        return
+    settings.criteria_file.write_text(next_text, encoding="utf-8")
     print(f"[distill:done] rows={len(rows)} file={settings.criteria_file}", flush=True)
 
 

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from typing import Literal, TypeAlias
+from dataclasses import dataclass
+from typing import TypeAlias
 
 
-Source: TypeAlias = Literal["domestic", "overseas"]
+Source: TypeAlias = str
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 
@@ -34,7 +34,6 @@ class Stage1Result:
 @dataclass(frozen=True, slots=True)
 class ArticleJudgment:
     keep: bool
-    send: bool
     importance_score: int
     novelty_score: int
     confidence_score: int
@@ -46,12 +45,6 @@ class ArticleJudgment:
     telegram_title_ko: str
     risk_flags: tuple[str, ...]
     raw_response: str
-
-    def as_record(self) -> JsonObject:
-        record = asdict(self)
-        record["risk_flags"] = list(self.risk_flags)
-        record.pop("raw_response", None)
-        return record
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,4 +76,10 @@ class JudgmentRecord:
     telegram_title_ko: str
     risk_flags: tuple[str, ...]
     decision: str
+
+
+@dataclass(frozen=True, slots=True)
+class CollectionResult:
+    items: list[Item]
+    attempted: bool
 

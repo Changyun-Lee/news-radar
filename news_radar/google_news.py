@@ -1,37 +1,18 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from email.utils import parsedate_to_datetime
-import html
-import re
 from typing import Final
 from urllib import parse, request
 import xml.etree.ElementTree as ET
 
-from .config import OverseasQuery, load_overseas_queries, load_settings
+from .config import OverseasQuery, Settings, load_overseas_queries, load_settings
 from .console import configure_utf8_output
-from .models import Item
+from .models import CollectionResult, Item
+from .text import clean_text, parse_pub_date
 
 
 GOOGLE_NEWS_URL: Final = "https://news.google.com/rss/search"
 USER_AGENT: Final = "news-radar/1.0 (+https://github.com/)"
-TAG_RE: Final = re.compile(r"<[^>]+>")
-
-
-def clean_text(value: str | None) -> str:
-    return html.unescape(TAG_RE.sub("", value or "")).strip()
-
-
-def parse_pub_date(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        dt = parsedate_to_datetime(value)
-    except (TypeError, ValueError):
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
 
 
 def rss_url(query: str) -> str:
@@ -82,6 +63,19 @@ def parse_rss(stream: str, xml_text: str, now: datetime | None = None) -> list[I
 
 def collect_query(query: OverseasQuery) -> list[Item]:
     return parse_rss(query.stream, fetch_rss(query.query))
+
+
+def collect_overseas(settings: Settings) -> CollectionResult:
+    items: list[Item] = []
+    for query in load_overseas_queries(settings.overseas_queries_file):
+        try:
+            query_items = collect_query(query)
+        except (ET.ParseError, OSError, TimeoutError) as exc:
+            print(f"[overseas:error] stream={query.stream} {exc}", flush=True)
+            continue
+        print(f"[overseas] stream={query.stream} collected={len(query_items)}", flush=True)
+        items.extend(query_items)
+    return CollectionResult(items, attempted=True)
 
 
 def main() -> None:

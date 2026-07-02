@@ -1,24 +1,24 @@
 완료한 것
-- news_radar 패키지 생성: 수집기, SQLite store, OpenRouter 2단 judge, Telegram, feedback, distill, worker.
-- config/overseas_queries.txt와 prompts/criteria_ko.md 작성.
-- GitHub Actions 3개 작성: domestic.yml, overseas.yml, distill.yml.
-- README.md 작성: Secrets, 수동 실행, SEND_TELEGRAM 전환, 기업/쿼리 수정, DART 추가 지점.
-- data/monitor.sqlite3 생성: 드라이런 seed 후 seen_items=125, worker_state=2.
-- 검증 완료: compileall 통과, RSS 단독 파싱, RUN_ONCE 드라이런 2회, CLI help/invalid 인자 확인.
+- FIX-1: Telegram 발송 예외를 항목 단위로 처리하고 실패 시 judgment/seen/sent를 남기지 않도록 수정.
+- FIX-1: feedback 수집 실패를 비치명화하고 judge 네트워크 오류 처리를 RuntimeError/OSError 경로로 통합.
+- FIX-2: 연속 judge 오류 3회 시 실행 내 LLM 서킷브레이커를 열고 남은 항목을 unseen으로 스킵.
+- FIX-3: initialized 타임스탬프 재기록 방지, 수집 시도 완료 시만 초기화, prune 일 1회 가드 적용.
+- FIX-4: distill 기준문서 펜스 제거, 최소 라인/해외/국내 헤더 검증, 실패 시 기존 파일 유지.
+- FIX-5/6: stage2 send 필드 제거, keep=false 미발송 반영, stage1에도 criteria_ko.md 주입.
+- FIX-7: 3개 workflow에 always 커밋 단계, data 디렉터리 가드, rebase abort/retry/DB 충돌 복구 추가.
+- FIX-8: worker 수집 디스패치를 COLLECTORS 레지스트리로 중앙화하고 수집기 예외 처리를 모듈 내부로 이동.
+- 공용화: OpenRouter 호출/오류 처리, JSON shape helpers, fenced text 추출, clean_text/pubDate 파서 분리.
 
 결정 근거
-- 사용자 계약의 표준라이브러리만 사용 조건에 맞춰 urllib, sqlite3, xml.etree만 사용.
-- Naver는 원본의 직접 API 우선, k-skill-proxy 폴백 구조 유지.
-- source별 initialized 상태를 분리해 국내/해외 첫 실행 seed를 각각 유지.
-- MAX_LLM_CALLS_PER_RUN 초과분은 seen 기록 없이 skip 처리.
-- OPENROUTER_API_KEY 미설정 시 seen 기록 후 LLM skip 처리.
+- OPENROUTER_API_KEY 없음 경로는 기존처럼 seen/judgment 기록을 유지.
+- CallLimitReached는 예산 소진으로 보고 unseen 재시도 정책을 유지.
+- rebase 중 DB 충돌은 재적용 중인 로컬 상태 커밋 쪽 파일을 유지하도록 --theirs 경로를 사용.
+- setup-python 제거 후 workflow 실행 명령은 runner 기본 python3로 변경.
 
 미해결 쟁점
-- OPENROUTER_API_KEY 없이 검증했으므로 실제 2단 LLM 판정 응답은 미검증.
-- TELEGRAM_BOT_TOKEN 없이 검증했으므로 실제 sendMessage/getUpdates는 미검증.
-- GitHub 원격 저장소와 Secrets 등록 후 Actions push 동작은 미검증.
+- 검증 중 라이브 RSS/뉴스 신규 8건이 data/monitor.sqlite3에 기록되어 로컬 git status -- data는 M 상태.
+- OPENROUTER_API_KEY/TELEGRAM_BOT_TOKEN 없이 검증하여 실제 LLM 응답과 실제 Telegram 발송은 미검증.
 
 다음 작업
 - Claude Code에서 커밋 필요.
-- GitHub Secrets 등록 후 workflow_dispatch dry-run 실행.
-- SEND_TELEGRAM=1 전환 전 Telegram 채팅 ID와 봇 권한 확인.
+- GitHub Secrets 환경에서 workflow_dispatch 실행 확인 필요.

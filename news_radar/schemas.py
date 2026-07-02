@@ -10,7 +10,6 @@ JUDGMENT_SCHEMA: Final[JsonObject] = {
     "additionalProperties": False,
     "required": [
         "keep",
-        "send",
         "importance_score",
         "novelty_score",
         "confidence_score",
@@ -24,7 +23,6 @@ JUDGMENT_SCHEMA: Final[JsonObject] = {
     ],
     "properties": {
         "keep": {"type": "boolean"},
-        "send": {"type": "boolean"},
         "importance_score": {"type": "integer"},
         "novelty_score": {"type": "integer"},
         "confidence_score": {"type": "integer"},
