@@ -44,10 +44,13 @@ def _domain_from_url(raw_url: str) -> str:
     value = clean_text(raw_url).lower().strip(".")
     if not value:
         return ""
-    parsed = parse.urlparse(value)
-    if not parsed.netloc:
-        parsed = parse.urlparse(f"//{value}")
-    return (parsed.hostname or "").strip(".")
+    try:
+        parsed = parse.urlparse(value)
+        if not parsed.netloc:
+            parsed = parse.urlparse(f"//{value}")
+        return (parsed.hostname or "").strip(".")
+    except ValueError:
+        return ""
 
 
 def _domain_matches(hostname: str, blocked_domain: str) -> bool:
