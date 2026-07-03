@@ -22,7 +22,7 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      SEND_TELEGRAM: ${{ secrets.SEND_TELEGRAM }}
+      SEND_TELEGRAM: ${{ secrets.SEND_TELEGRAM || '1' }}
       STAGE1_MODEL: ${{ secrets.STAGE1_MODEL }}
       STAGE2_MODEL: ${{ secrets.STAGE2_MODEL }}
       RUN_ONCE: "1"
