@@ -32,6 +32,7 @@ class TelegramClient:
                     [
                         {"text": "👍 유용", "callback_data": f"fb:g:{row_id}"},
                         {"text": "👎 버림", "callback_data": f"fb:b:{row_id}"},
+                        {"text": "🔁 이미 앎", "callback_data": f"fb:k:{row_id}"},
                     ]
                 ]
             },

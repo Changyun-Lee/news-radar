@@ -61,6 +61,9 @@ def main() -> None:
                 "content": (
                     f"현재 기준:\n{current}\n\n"
                     f"최근 7일 판정/피드백:\n{json.dumps(rows, ensure_ascii=False)}\n\n"
+                    "피드백 라벨 의미: good=유용, bad=버림, "
+                    "known=사용자가 이미 알고 있던 뉴스. 뉴스 유형은 유효하니 해당 범주를 제외하지 말고, "
+                    "신선도·중복 판정을 엄격히 하는 근거로만 사용.\n\n"
                     "기준 문서만 한국어로 출력하라."
                 ),
             },

@@ -1,10 +1,29 @@
 from __future__ import annotations
 
+from typing import Final
+
 from .config import Settings
 from .http import post_json
 from .json_helpers import list_or_empty, object_or_empty
 from .models import JsonObject
 from .store import SeenStore
+
+
+FEEDBACK_LABELS: Final = {"g": "good", "b": "bad", "k": "known"}
+
+
+def parse_feedback_callback(data_value: str) -> tuple[str, int] | None:
+    parts = data_value.split(":")
+    if len(parts) != 3 or parts[0] != "fb":
+        return None
+    label = FEEDBACK_LABELS.get(parts[1])
+    if label is None:
+        return None
+    try:
+        row_id = int(parts[2])
+    except ValueError:
+        return None
+    return label, row_id
 
 
 def collect_feedback(settings: Settings, store: SeenStore) -> int:
@@ -28,14 +47,10 @@ def collect_feedback(settings: Settings, store: SeenStore) -> int:
         data_value = callback.get("data")
         if not isinstance(data_value, str) or not data_value.startswith("fb:"):
             continue
-        parts = data_value.split(":")
-        if len(parts) != 3:
+        parsed = parse_feedback_callback(data_value)
+        if parsed is None:
             continue
-        label = "good" if parts[1] == "g" else "bad"
-        try:
-            row_id = int(parts[2])
-        except ValueError:
-            continue
+        label, row_id = parsed
         store.add_feedback(row_id, label)
         saved += 1
         if isinstance(callback_id, str):
