@@ -1,20 +1,21 @@
 완료한 것
-- CHANGE-1: Telegram 인라인 키보드에 `🔁 이미 앎` 버튼과 `fb:k:{row_id}` callback_data 추가.
-- CHANGE-1: feedback callback 파서를 추가하고 `k`를 `known` 라벨로 저장하도록 수집 경로 갱신.
-- CHANGE-1: distill 기준 갱신 프롬프트에 `known` 라벨 의미와 사용 제한을 명시.
-- CHANGE-1: README에 세 피드백 버튼 설명 1줄 추가.
-- CHANGE-2: stage2 프롬프트에 검색 키워드/기사 주체 혼동 방지, 명시 사실 한정, 불명확 주체 제목 유지 제약 추가.
-- CHANGE-2: `telegram_title_ko`에도 동일 원칙을 적용하도록 stage2 프롬프트에 명시.
+- 해외 Google News RSS item의 source url/link 도메인 기반 한국 언론사 차단 추가.
+- config/overseas_source_blocklist.txt 신규 작성(.kr 중복 도메인 제외).
+- 해외 스트림 로그에 skipped_kr 카운트 추가.
+- MIN_SEND_IMPORTANCE env 설정(기본 4)과 should_send below_send_tier 문턱 추가.
+- domestic/overseas GitHub Actions env에 MIN_SEND_IMPORTANCE 기본값 연결.
+- README에 해외 출처 차단과 단독 발송급 문턱 설명 추가.
 
 결정 근거
-- feedback 테이블의 `label`은 TEXT NOT NULL이며 CHECK 제약이 없어 DB 스키마 변경 없이 `known` 저장 가능.
-- callback 파싱을 함수로 분리해 실제 수집 경로와 검증 명령이 같은 로직을 사용.
-- stage1은 요청 범위상 변경하지 않음.
+- source 태그 url을 우선 사용하고 없으면 link 도메인으로 폴백해 LLM 전에 중복 해외 노출을 제거.
+- 블록리스트는 suffix 매칭으로 english.chosun.com 같은 하위 도메인을 상위 도메인 항목으로 차단.
+- keep=false와 중복 억제 사유를 먼저 유지한 뒤 importance 문턱을 적용.
+- 운영 data/monitor.sqlite3 보호를 위해 검증은 DATA_DIR 임시 경로로만 실행.
 
 미해결 쟁점
-- OPENROUTER_API_KEY/TELEGRAM_BOT_TOKEN 없이 검증하여 실제 LLM 응답과 실제 Telegram 발송은 미검증.
-- 필수 RUN_ONCE 검증으로 `data/monitor.sqlite3`가 갱신됨.
+- 실제 GitHub Secrets의 MIN_SEND_IMPORTANCE 값은 로컬에서 확인하지 않음.
+- OPENROUTER_API_KEY 없이 RUN_ONCE 검증해 실제 LLM/Telegram 발송은 수행하지 않음.
 
 다음 작업
 - Claude Code에서 커밋 필요.
-- GitHub Secrets 환경에서 실제 stage2 응답과 Telegram callback 수거 확인 필요.
+- GitHub Actions 환경에서 MIN_SEND_IMPORTANCE Secret 조정 여부 확인 필요.

@@ -29,6 +29,7 @@ class Settings:
     stage1_model: str
     stage2_model: str
     max_llm_calls_per_run: int
+    min_send_importance: int
     check_interval_seconds: int
     news_display: int
     send_telegram: bool
@@ -75,6 +76,7 @@ def load_settings() -> Settings:
         stage1_model=env_str("STAGE1_MODEL", "google/gemini-2.5-flash-lite"),
         stage2_model=env_str("STAGE2_MODEL", "google/gemini-2.5-flash"),
         max_llm_calls_per_run=env_int("MAX_LLM_CALLS_PER_RUN", 40),
+        min_send_importance=env_int("MIN_SEND_IMPORTANCE", 4),
         check_interval_seconds=env_int("CHECK_INTERVAL_SECONDS", 600),
         news_display=env_int("NEWS_DISPLAY", 10),
         send_telegram=env_bool("SEND_TELEGRAM", False),

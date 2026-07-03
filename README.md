@@ -70,3 +70,8 @@ stream | Google News 검색식
 
 수집기는 `Item(source, stream, title, description, url, published_at)` 공통 스키마를 사용합니다. DART를 추가할 때는 새 수집기가 같은 `Item`을 반환하게 만들고, `news_radar.worker.collect_source()`에 새 source 분기를 넣으면 됩니다.
 
+## 8. 운영 필터
+
+- 해외 Google News RSS는 `<source url>` 도메인(없으면 link 도메인)이 `.kr`이거나 `config/overseas_source_blocklist.txt`에 suffix 매칭되면 LLM 전에 제외합니다.
+- Telegram 발송은 `MIN_SEND_IMPORTANCE`(기본 `4`) 이상만 허용하며, 낮은 판정은 저장만 하고 `below_send_tier`로 미발송 처리합니다.
+

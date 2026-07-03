@@ -1,0 +1,16 @@
+# One domain per line. Subdomains are matched by suffix.
+sedaily.com
+koreaherald.com
+chosun.com
+koreadaily.com
+koreajoongangdaily.com
+koreajoongangdaily.joins.com
+joins.com
+hankyung.com
+kedglobal.com
+koreabizwire.com
+ajudaily.com
+ajunews.com
+heraldcorp.com
+donga.com
+newsis.com

@@ -117,9 +117,11 @@ class OpenRouterJudge:
                 return False, reason
             case ArticleJudgment(keep=False):
                 return False, "criteria_excluded"
-            case ArticleJudgment(duplicate_of_issue_key=duplicate, novelty_score=novelty):
+            case ArticleJudgment(duplicate_of_issue_key=duplicate, novelty_score=novelty) as judgment:
                 if duplicate and novelty < 4:
                     return False, "duplicate_without_major_update"
+                if judgment.importance_score < self.settings.min_send_importance:
+                    return False, "below_send_tier"
                 return True, "recall_first_send"
             case unreachable:
                 assert_never(unreachable)
