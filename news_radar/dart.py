@@ -214,8 +214,9 @@ def collect_dart(settings: Settings, store: SeenStore | None = None) -> Collecti
     try:
         client.ensure_corp_code_cache(companies)
     except DartCollectionError as exc:
+        # 부트스트랩 실패는 시드를 소진하면 안 됨 — 다음 실행에서 재시도
         print(f"[dart:error] {exc}", flush=True)
-        return CollectionResult([], attempted=True)
+        return CollectionResult([], attempted=False)
     for company in companies:
         try:
             result = collect_company_filings(client, company)
