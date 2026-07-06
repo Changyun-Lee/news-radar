@@ -1,6 +1,6 @@
 # news-radar
 
-음식료·화장품 뉴스 레이더입니다. GitHub Actions가 국내 네이버 뉴스, 해외 Google News RSS, 공개 텔레그램 채널을 수집하고, OpenRouter 2단 판정 뒤 텔레그램으로 보냅니다.
+음식료·화장품 뉴스 레이더입니다. GitHub Actions가 국내 네이버 뉴스, DART 공시, 해외 Google News RSS, 공개 텔레그램 채널을 수집하고, OpenRouter 판정 뒤 텔레그램으로 보냅니다.
 
 ## 1. GitHub 저장소 만들기
 
@@ -23,6 +23,7 @@
 선택 키:
 
 - `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`: 네이버 공식 검색 API를 직접 쓸 때만 등록
+- `API_K_DART`: DART 공시 수집용 OpenDART 인증키. 없으면 DART 수집기는 `[dart:skip]` 로그 후 상태 초기화를 하지 않습니다.
 - `STAGE1_MODEL`: 기본 `google/gemini-2.5-flash-lite`
 - `STAGE2_MODEL`: 기본 `google/gemini-2.5-flash`
 
@@ -30,7 +31,7 @@
 
 GitHub `Actions` 탭에서 아래 워크플로를 선택한 뒤 `Run workflow`를 누릅니다.
 
-- `Domestic news radar`: 국내 네이버 뉴스
+- `Domestic news radar`: 국내 네이버 뉴스 실행 뒤 DART 공시도 같은 10분 창에서 실행
 - `Overseas news radar`: 해외 Google News RSS
 - `Telegram channel news radar`: 공개 텔레그램 채널
 - `Distill criteria`: 주간 기준 증류
@@ -94,9 +95,15 @@ stream | handle | mode
 
 한 줄에 하나씩 적고, `#`로 주석을 남길 수 있습니다. 매칭은 대소문자를 구분하지 않으며 하이픈·공백 제거 비교를 병행하므로 `K-뷰티`, `K 뷰티`, `K뷰티`가 같은 키워드로 처리됩니다. `config/companies.txt`의 회사명과 별칭은 실행 시 자동 병합됩니다.
 
-## 9. DART 추후 추가 지점
+## 9. DART 공시 수집
 
-수집기는 `Item(source, stream, title, description, url, published_at)` 공통 스키마를 사용합니다. DART를 추가할 때는 새 수집기가 같은 `Item`을 반환하게 만들고, `news_radar.worker.collect_source()`에 새 source 분기를 넣으면 됩니다.
+DART 수집기는 `config/companies.txt`의 감시 기업별 최근 공시를 OpenDART `list.json`에서 조회합니다. 기본 조회 기간은 최근 2일이며 `DART_LOOKBACK_DAYS` 환경변수로 조정할 수 있습니다.
+
+- `API_K_DART` Secret이 필요합니다. 로컬에서는 같은 이름의 환경변수 또는 `DART_API_KEY`를 사용할 수 있습니다.
+- DART `corpCode.zip`은 매 실행 받지 않고 `DATA_DIR/dart_corp_codes.json` 캐시에 기업명별 `corp_code`를 저장합니다.
+- `corp_code`가 없거나 정확명/별칭 매칭이 안 되는 비상장·외감 법인은 `[dart:skip-nocode]` 로그 후 건너뜁니다.
+- 보고서명에서 공백과 `ㆍ`, `·`, `.`를 제거한 뒤 `임원주요주주특정증권등소유상황보고서`가 포함되면 LLM 전 단계에서 제외합니다. `주식등의대량보유상황보고서`는 별도 보고서이므로 유지합니다.
+- DART 항목은 감시 기업의 공식 공시라 stage1 관련성 필터를 건너뛰고 stage2 중요도 판정으로 바로 들어갑니다.
 
 ## 10. 운영 필터
 

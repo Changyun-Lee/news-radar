@@ -19,6 +19,7 @@ jobs:
       NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
       NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
       KSKILL_PROXY_BASE_URL: ${{ secrets.KSKILL_PROXY_BASE_URL }}
+      API_K_DART: ${{ secrets.API_K_DART }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -31,6 +32,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run domestic radar
         run: python3 -m news_radar.worker --source domestic
+      - name: Run DART disclosure radar
+        if: always()
+        run: python3 -m news_radar.worker --source dart
       - name: Commit state
         if: always()
         run: |

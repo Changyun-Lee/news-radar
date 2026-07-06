@@ -8,10 +8,11 @@ from typing import Final, assert_never
 
 from .config import Settings, load_settings
 from .console import configure_utf8_output
+from .dart import collect_dart
 from .feedback import collect_feedback
 from .google_news import collect_overseas
 from .judge import CallLimitReached, CallLimiter, OpenRouterJudge
-from .models import ArticleJudgment, CollectionResult, Item, Source, Stage2Failure
+from .models import ArticleJudgment, CollectionResult, Item, Source, Stage1Result, Stage2Failure
 from .naver import collect_domestic
 from .records import skip_record, stage1_record, stage2_record
 from .store import SeenStore
@@ -28,10 +29,12 @@ Finalizer = Callable[[SeenStore, CollectionResult, tuple[str, ...]], None]
 class CollectorSpec:
     collect: Collector
     finalize: Finalizer | None = None
+    skip_stage1: bool = False
 
 
 COLLECTORS: Final[dict[Source, CollectorSpec]] = {
     "domestic": CollectorSpec(collect_domestic),
+    "dart": CollectorSpec(collect_dart, skip_stage1=True),
     "overseas": CollectorSpec(collect_overseas),
     "tgchannel": CollectorSpec(collect_tgchannel, finalize_tgchannel),
 }
@@ -99,16 +102,19 @@ def process_item(runtime: Runtime, item: Item, seed_only: bool, stats: RunStats)
         stats.circuit_skipped += 1
         print(f"[llm:circuit-open] {item.source} | {item.stream} | {item.title}", flush=True)
         return False
-    try:
-        stage1 = runtime.judge.judge_relevance(item, runtime.criteria_text, runtime.limiter)
-    except CallLimitReached:
-        stats.budget_skipped += 1
-        print(f"[budget:skip] {item.source} | {item.stream} | {item.title}", flush=True)
-        return False
-    except (RuntimeError, OSError) as exc:
-        record_judge_error(stats, item, 1, exc)
-        return False
-    record_judge_success(stats)
+    if COLLECTORS[item.source].skip_stage1:
+        stage1 = Stage1Result(True, "stage1 skipped for monitored official disclosure source", (), "{}")
+    else:
+        try:
+            stage1 = runtime.judge.judge_relevance(item, runtime.criteria_text, runtime.limiter)
+        except CallLimitReached:
+            stats.budget_skipped += 1
+            print(f"[budget:skip] {item.source} | {item.stream} | {item.title}", flush=True)
+            return False
+        except (RuntimeError, OSError) as exc:
+            record_judge_error(stats, item, 1, exc)
+            return False
+        record_judge_success(stats)
     if not stage1.relevant:
         runtime.store.add_seen(item)
         runtime.store.record_judgment(stage1_record(runtime.settings, item, stage1, "stage1_irrelevant"))

@@ -30,6 +30,8 @@ class Settings:
     telegram_bot_token: str
     telegram_chat_id: str
     openrouter_api_key: str
+    dart_api_key: str
+    dart_lookback_days: int
     stage1_model: str
     stage2_model: str
     max_llm_calls_per_run: int
@@ -79,6 +81,8 @@ def load_settings() -> Settings:
         telegram_bot_token=env_str("TELEGRAM_BOT_TOKEN"),
         telegram_chat_id=env_str("TELEGRAM_CHAT_ID"),
         openrouter_api_key=env_str("OPENROUTER_API_KEY"),
+        dart_api_key=env_str("API_K_DART") or env_str("DART_API_KEY"),
+        dart_lookback_days=env_int("DART_LOOKBACK_DAYS", 2),
         stage1_model=env_str("STAGE1_MODEL", "google/gemini-2.5-flash-lite"),
         stage2_model=env_str("STAGE2_MODEL", "google/gemini-2.5-flash"),
         max_llm_calls_per_run=env_int("MAX_LLM_CALLS_PER_RUN", 40),
