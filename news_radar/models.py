@@ -80,6 +80,16 @@ class JudgmentRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class SuppressionRecord:
+    source: Source
+    dedupe_key: str
+    stream: str
+    title: str
+    url: str
+    published_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class CollectionMark:
     scope: str
     value: int

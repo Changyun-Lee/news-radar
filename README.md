@@ -26,6 +26,8 @@
 - `API_K_DART`: DART 공시 수집용 OpenDART 인증키. 없으면 DART 수집기는 `[dart:skip]` 로그 후 상태 초기화를 하지 않습니다.
 - `STAGE1_MODEL`: 기본 `google/gemini-2.5-flash-lite`
 - `STAGE2_MODEL`: 기본 `google/gemini-2.5-flash`
+- `MENTOR_SHARED_HOURS`: 사수 공유 뉴스 억제 이력을 stage2에 넣을 조회 시간. 기본 `48`
+- `MENTOR_SHARED_LIMIT`: stage2에 넣을 사수 공유 뉴스 제목 수. 기본 `30`
 
 ## 3. 수동 실행
 
@@ -81,6 +83,7 @@ stream | handle | mode
 - `handle`은 `https://t.me/s/<handle>` 공개 웹 페이지에서 접근 가능한 채널명입니다.
 - `mode=llm`은 수집한 텍스트 메시지를 전부 기존 LLM 파이프라인으로 보냅니다.
 - `mode=keyword`는 `config/breaking_keywords.txt`와 `config/companies.txt`의 기업명·별칭에 걸린 메시지만 LLM 파이프라인으로 보냅니다.
+- `mode=suppress`는 메시지를 발송 후보로 만들지 않고 `tgsuppress` 이력으로 저장합니다. URL 포함 줄이 2개 이상이면 줄 단위로 분해해 stage2 중복 억제에만 사용합니다.
 - 채널별 마지막 수집 `message_id`는 `worker_state`의 `tg_high_water:<handle>` 키로 저장됩니다.
 
 ## 8. 속보 키워드 관리

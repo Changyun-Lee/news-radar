@@ -4,8 +4,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 import json
 import sqlite3
+from typing import Final
 
-from .models import Item, JudgmentRecord, JsonObject, Source
+from .models import Item, JudgmentRecord, JsonObject, Source, SuppressionRecord
+
+
+MENTOR_SHARED_SOURCE: Final = "tgsuppress"
+MENTOR_SHARED_DECISION: Final = "mentor_shared"
 
 
 class SeenStore:
@@ -189,6 +194,41 @@ class SeenStore:
             )
         return int(cursor.lastrowid)
 
+    def record_suppression(self, record: SuppressionRecord) -> bool:
+        with self.conn:
+            seen_cursor = self.conn.execute(
+                """
+                INSERT OR IGNORE INTO seen_items(source, dedupe_key, stream, title)
+                VALUES (?, ?, ?, ?)
+                """,
+                (record.source, record.dedupe_key, record.stream, record.title),
+            )
+            if seen_cursor.rowcount == 0:
+                return False
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO judgments(
+                    source, dedupe_key, stream, title, description, url, published_at,
+                    stage1_relevant, stage1_reason, stage1_model, stage2_model, raw_response,
+                    importance_score, novelty_score, confidence_score, issue_key,
+                    duplicate_of_issue_key, summary_ko, implication_ko, reason_ko,
+                    telegram_title_ko, risk_flags_json, decision
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, '', '', '', '{}', 0, 0, 0, '', '', '', '', '', '', '[]', ?)
+                """,
+                (
+                    record.source,
+                    record.dedupe_key,
+                    record.stream,
+                    record.title,
+                    "",
+                    record.url,
+                    record.published_at,
+                    MENTOR_SHARED_DECISION,
+                ),
+            )
+        return True
+
     def mark_judgment_sent(self, row_id: int, decision: str) -> None:
         with self.conn:
             self.conn.execute(
@@ -231,6 +271,21 @@ class SeenStore:
             for row in rows
         ]
 
+    def get_mentor_shared_recent(self, hours: int, limit: int) -> list[str]:
+        rows = self.conn.execute(
+            """
+            SELECT title
+            FROM judgments
+            WHERE source = ?
+              AND decision = ?
+              AND judged_at >= datetime('now', ?)
+            ORDER BY judged_at DESC
+            LIMIT ?
+            """,
+            (MENTOR_SHARED_SOURCE, MENTOR_SHARED_DECISION, f"-{hours} hours", limit),
+        ).fetchall()
+        return [str(row[0]) for row in rows]
+
     def add_feedback(self, row_id: int, label: str) -> None:
         with self.conn:
             self.conn.execute("INSERT INTO feedback(row_id, label) VALUES(?, ?)", (row_id, label))
@@ -244,6 +299,7 @@ class SeenStore:
             FROM judgments j
             LEFT JOIN feedback f ON f.row_id = j.id
             WHERE j.judged_at >= datetime('now', ?)
+              AND j.source != 'tgsuppress'
             GROUP BY j.id
             ORDER BY j.judged_at DESC
             LIMIT 80
