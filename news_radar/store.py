@@ -207,7 +207,7 @@ class SeenStore:
                 return False
             self.conn.execute(
                 """
-                INSERT INTO judgments(
+                INSERT OR IGNORE INTO judgments(
                     source, dedupe_key, stream, title, description, url, published_at,
                     stage1_relevant, stage1_reason, stage1_model, stage2_model, raw_response,
                     importance_score, novelty_score, confidence_score, issue_key,
@@ -299,6 +299,7 @@ class SeenStore:
             FROM judgments j
             LEFT JOIN feedback f ON f.row_id = j.id
             WHERE j.judged_at >= datetime('now', ?)
+              AND j.source != 'tgsuppress'
             GROUP BY j.id
             ORDER BY j.judged_at DESC
             LIMIT 80
