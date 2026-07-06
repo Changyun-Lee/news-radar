@@ -10,8 +10,10 @@ from urllib import parse
 
 from .config import Settings, load_companies
 from .http import get_text
-from .models import CollectionResult, Item
+from .models import CollectionMark, CollectionResult, Item, ItemMark
 from .store import SeenStore
+from .tgchannel_keywords import keyword_gate_allows
+from .tgchannel_state import read_high_water
 
 
 ChannelMode = Literal["llm", "keyword"]
@@ -20,9 +22,7 @@ TELEGRAM_WEB_URL: Final = "https://t.me/s"
 USER_AGENT: Final = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 news-radar/1.0"
 MAX_PAGES_PER_CHANNEL: Final = 50
 PAGE_DELAY_SECONDS: Final = 0.4
-HIGH_WATER_PREFIX: Final = "tg_high_water:"
 SPACE_RE: Final = re.compile(r"[ \t\r\f\v]+")
-SPACE_HYPHEN_RE: Final = re.compile(r"[\s\-‐‑‒–—―]+")
 
 
 class TelegramChannelConfigError(RuntimeError):
@@ -183,23 +183,6 @@ def load_breaking_keywords(keyword_path: Path, companies_path: Path) -> tuple[st
     return tuple(dict.fromkeys(keywords))
 
 
-def normalize_keyword_value(value: str) -> str:
-    return SPACE_HYPHEN_RE.sub("", value.casefold())
-
-
-def keyword_gate_allows(text: str, keywords: tuple[str, ...]) -> bool:
-    folded_text = text.casefold()
-    normalized_text = normalize_keyword_value(text)
-    for keyword in keywords:
-        folded_keyword = keyword.casefold()
-        if folded_keyword and folded_keyword in folded_text:
-            return True
-        normalized_keyword = normalize_keyword_value(keyword)
-        if normalized_keyword and normalized_keyword in normalized_text:
-            return True
-    return False
-
-
 def fetch_channel_page(handle: str, before: int | None = None) -> str:
     params = None if before is None else {"before": before}
     url = f"{TELEGRAM_WEB_URL}/{parse.quote(handle, safe='')}"
@@ -213,23 +196,10 @@ def parse_channel_page(handle: str, html_text: str) -> list[TelegramMessage]:
     return parser.messages
 
 
-def _state_key(handle: str) -> str:
-    return f"{HIGH_WATER_PREFIX}{handle}"
-
-
-def _read_high_water(store: SeenStore, handle: str) -> int | None:
-    raw_value = store.get_state(_state_key(handle))
-    if raw_value is None:
-        return None
-    try:
-        return int(raw_value)
-    except ValueError:
-        return None
-
-
-def _fetch_pages(channel: TelegramChannel, high_water: int | None) -> tuple[list[TelegramMessage], int | None, bool]:
+def _fetch_pages(channel: TelegramChannel, high_water: int | None) -> tuple[list[TelegramMessage], int | None, bool, bool]:
     messages: list[TelegramMessage] = []
     highest_message_id: int | None = None
+    attempted = False
     before: int | None = None
     page_count = 0
     while page_count < MAX_PAGES_PER_CHANNEL:
@@ -237,23 +207,24 @@ def _fetch_pages(channel: TelegramChannel, high_water: int | None) -> tuple[list
             page_messages = parse_channel_page(channel.handle, fetch_channel_page(channel.handle, before))
         except (OSError, TimeoutError) as exc:
             print(f"[tgchannel:error] stream={channel.stream} before={before or ''} {exc}", flush=True)
-            return messages, highest_message_id, False
+            return messages, highest_message_id, False, attempted
+        attempted = True
         if not page_messages:
-            return messages, highest_message_id, True
+            return messages, highest_message_id, True, attempted
         page_ids = [message.message_id for message in page_messages]
         page_count += 1
         messages.extend(page_messages)
         page_high = max(page_ids)
         highest_message_id = page_high if highest_message_id is None else max(highest_message_id, page_high)
         if high_water is None or any(message_id <= high_water for message_id in page_ids):
-            return messages, highest_message_id, True
+            return messages, highest_message_id, True, attempted
         before = min(page_ids)
         if page_count < MAX_PAGES_PER_CHANNEL:
             time.sleep(PAGE_DELAY_SECONDS)
-    return messages, highest_message_id, True
+    return messages, highest_message_id, True, attempted
 
 
-def _message_to_item(channel: TelegramChannel, message: TelegramMessage) -> Item | None:
+def _message_to_item(channel: TelegramChannel, message: TelegramMessage, seed: bool) -> Item | None:
     if not message.text or not message.published_at:
         return None
     first_line = message.text.splitlines()[0]
@@ -264,36 +235,52 @@ def _message_to_item(channel: TelegramChannel, message: TelegramMessage) -> Item
         description=message.text[:600].rstrip(),
         url=f"https://t.me/{channel.handle}/{message.message_id}",
         published_at=message.published_at,
+        seed=seed,
     )
 
 
-def _collect_channel(channel: TelegramChannel, store: SeenStore, keywords: tuple[str, ...]) -> tuple[list[Item], int, int]:
-    high_water = _read_high_water(store, channel.handle)
-    messages, highest_message_id, completed = _fetch_pages(channel, high_water)
+def _collect_channel(
+    channel: TelegramChannel,
+    store: SeenStore,
+    keywords: tuple[str, ...],
+) -> tuple[list[Item], int, int, bool, CollectionMark | None, tuple[ItemMark, ...]]:
+    high_water = read_high_water(store, channel.handle)
+    messages, highest_message_id, completed, attempted = _fetch_pages(channel, high_water)
     candidates = messages if high_water is None else [message for message in messages if message.message_id > high_water]
-    fetched_items = [item for message in candidates if (item := _message_to_item(channel, message)) is not None]
+    fetched_pairs = [
+        (message, item)
+        for message in candidates
+        if (item := _message_to_item(channel, message, high_water is None)) is not None
+    ]
     match channel.mode:
         case "llm":
-            passed_items = fetched_items
+            passed_pairs = fetched_pairs
         case "keyword":
-            passed_items = [item for item in fetched_items if keyword_gate_allows(item.description, keywords)]
+            passed_pairs = [(message, item) for message, item in fetched_pairs if keyword_gate_allows(message.text, keywords)]
         case unreachable:
             assert_never(unreachable)
-    if completed and highest_message_id is not None:
-        store.set_state(_state_key(channel.handle), str(highest_message_id))
-    return passed_items, len(fetched_items), len(fetched_items) - len(passed_items)
+    candidate_mark = CollectionMark(channel.handle, highest_message_id) if completed and highest_message_id is not None else None
+    item_marks = tuple(ItemMark(item.url, channel.handle, message.message_id) for message, item in passed_pairs)
+    return [item for _, item in passed_pairs], len(fetched_pairs), len(fetched_pairs) - len(passed_pairs), attempted, candidate_mark, item_marks
 
 
 def collect_tgchannel(settings: Settings, store: SeenStore) -> CollectionResult:
     channels = load_telegram_channels(settings.telegram_channels_file)
     keywords = load_breaking_keywords(settings.breaking_keywords_file, settings.companies_file)
     items: list[Item] = []
+    attempted = False
+    candidate_marks: list[CollectionMark] = []
+    item_marks: list[ItemMark] = []
     for channel in channels:
-        channel_items, fetched, gated_out = _collect_channel(channel, store, keywords)
+        channel_items, fetched, gated_out, channel_attempted, candidate_mark, channel_item_marks = _collect_channel(channel, store, keywords)
+        attempted = attempted or channel_attempted
+        if candidate_mark is not None:
+            candidate_marks.append(candidate_mark)
+        item_marks.extend(channel_item_marks)
         print(
             f"[tgchannel] stream={channel.stream} "
             f"fetched={fetched} gated_out={gated_out} passed={len(channel_items)}",
             flush=True,
         )
         items.extend(channel_items)
-    return CollectionResult(items, attempted=True)
+    return CollectionResult(items, attempted=attempted, candidate_marks=tuple(candidate_marks), item_marks=tuple(item_marks))

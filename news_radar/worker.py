@@ -17,13 +17,23 @@ from .records import skip_record, stage1_record, stage2_record
 from .store import SeenStore
 from .telegram import TelegramClient
 from .telegram_channels import collect_tgchannel
+from .tgchannel_state import finalize_tgchannel
 
 
 Collector = Callable[[Settings, SeenStore], CollectionResult]
-COLLECTORS: Final[dict[Source, Collector]] = {
-    "domestic": collect_domestic,
-    "overseas": collect_overseas,
-    "tgchannel": collect_tgchannel,
+Finalizer = Callable[[SeenStore, CollectionResult, tuple[str, ...]], None]
+
+
+@dataclass(frozen=True, slots=True)
+class CollectorSpec:
+    collect: Collector
+    finalize: Finalizer | None = None
+
+
+COLLECTORS: Final[dict[Source, CollectorSpec]] = {
+    "domestic": CollectorSpec(collect_domestic),
+    "overseas": CollectorSpec(collect_overseas),
+    "tgchannel": CollectorSpec(collect_tgchannel, finalize_tgchannel),
 }
 ALL_SOURCES: Final = "all"
 
@@ -69,35 +79,35 @@ def record_judge_success(stats: RunStats) -> None:
     stats.consecutive_judge_errors = 0
 
 
-def process_item(runtime: Runtime, item: Item, seed_only: bool, stats: RunStats) -> None:
+def process_item(runtime: Runtime, item: Item, seed_only: bool, stats: RunStats) -> bool:
     if runtime.store.has_seen(item):
-        return
+        return True
     if seed_only:
         if runtime.store.add_seen(item):
             stats.new += 1
             stats.seeded += 1
         print(f"[seed] {item.source} | {item.stream} | {item.title}", flush=True)
-        return
+        return True
     if not runtime.judge.enabled():
         runtime.store.add_seen(item)
         runtime.store.record_judgment(skip_record(item, "openrouter_key_missing", "OPENROUTER_API_KEY missing"))
         stats.new += 1
         stats.skipped += 1
         print(f"[llm:skip] {item.source} | {item.stream} | OPENROUTER_API_KEY missing | {item.title}", flush=True)
-        return
+        return True
     if stats.llm_circuit_open:
         stats.circuit_skipped += 1
         print(f"[llm:circuit-open] {item.source} | {item.stream} | {item.title}", flush=True)
-        return
+        return False
     try:
         stage1 = runtime.judge.judge_relevance(item, runtime.criteria_text, runtime.limiter)
     except CallLimitReached:
         stats.budget_skipped += 1
         print(f"[budget:skip] {item.source} | {item.stream} | {item.title}", flush=True)
-        return
+        return False
     except (RuntimeError, OSError) as exc:
         record_judge_error(stats, item, 1, exc)
-        return
+        return False
     record_judge_success(stats)
     if not stage1.relevant:
         runtime.store.add_seen(item)
@@ -105,17 +115,17 @@ def process_item(runtime: Runtime, item: Item, seed_only: bool, stats: RunStats)
         stats.new += 1
         stats.skipped += 1
         print(f"[stage1:skip] {item.source} | {item.stream} | {stage1.reason} | {item.title}", flush=True)
-        return
+        return True
     history = runtime.store.get_recent_history(item.source, item.stream, 14, 12)
     try:
         stage2 = runtime.judge.judge_article(item, stage1, history, runtime.criteria_text, runtime.limiter)
     except CallLimitReached:
         stats.budget_skipped += 1
         print(f"[budget:skip] {item.source} | {item.stream} | stage=2 | {item.title}", flush=True)
-        return
+        return False
     except (RuntimeError, OSError) as exc:
         record_judge_error(stats, item, 2, exc)
-        return
+        return False
     record_judge_success(stats)
     should_send, decision = runtime.judge.should_send(stage1, stage2)
     if not should_send:
@@ -124,7 +134,7 @@ def process_item(runtime: Runtime, item: Item, seed_only: bool, stats: RunStats)
         stats.new += 1
         stats.skipped += 1
         print(f"[stage2:skip] {item.source} | {item.stream} | {decision} | {item.title}", flush=True)
-        return
+        return True
     match stage2:
         case ArticleJudgment() as judgment:
             row_id = runtime.store.record_judgment(stage2_record(runtime.settings, item, stage1, stage2, decision))
@@ -134,15 +144,17 @@ def process_item(runtime: Runtime, item: Item, seed_only: bool, stats: RunStats)
                 runtime.store.delete_judgment(row_id)
                 stats.errors += 1
                 print(f"[telegram:error] source={item.source} stream={item.stream} row_id={row_id} {exc}", flush=True)
-                return
+                return False
             runtime.store.add_seen(item)
             runtime.store.mark_notified(item)
             runtime.store.mark_judgment_sent(row_id, decision)
             stats.new += 1
             stats.sent += 1
             print(f"[send] {item.source} | {item.stream} | row_id={row_id} | {item.title}", flush=True)
+            return True
         case Stage2Failure():
             stats.skipped += 1
+            return False
         case unreachable:
             assert_never(unreachable)
 
@@ -156,10 +168,10 @@ def selected_sources(raw_source: str) -> tuple[Source, ...]:
 
 
 def collect_source(source: Source, settings: Settings, store: SeenStore) -> CollectionResult:
-    collector = COLLECTORS.get(source)
-    if collector is None:
+    collector_spec = COLLECTORS.get(source)
+    if collector_spec is None:
         raise UnknownSourceError(f"Unknown source: {source}")
-    return collector(settings, store)
+    return collector_spec.collect(settings, store)
 
 
 def run_once(raw_source: str) -> RunStats:
@@ -189,8 +201,13 @@ def run_once(raw_source: str) -> RunStats:
             seed_only = is_first_run and settings.first_run_mode == "seed"
             result = collect_source(source, settings, store)
             stats.collected += len(result.items)
+            unconsumed_urls: list[str] = []
             for item in result.items:
-                process_item(runtime, item, seed_only, stats)
+                if not process_item(runtime, item, seed_only or item.seed, stats):
+                    unconsumed_urls.append(item.url)
+            collector_spec = COLLECTORS[source]
+            if collector_spec.finalize is not None:
+                collector_spec.finalize(store, result, tuple(unconsumed_urls))
             if is_first_run and result.attempted:
                 store.mark_initialized(source)
     finally:

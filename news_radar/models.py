@@ -17,6 +17,7 @@ class Item:
     description: str
     url: str
     published_at: str
+    seed: bool = False
 
     @property
     def dedupe_key(self) -> str:
@@ -79,7 +80,22 @@ class JudgmentRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class CollectionMark:
+    scope: str
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
+class ItemMark:
+    url: str
+    scope: str
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
 class CollectionResult:
     items: list[Item]
     attempted: bool
+    candidate_marks: tuple[CollectionMark, ...] = ()
+    item_marks: tuple[ItemMark, ...] = ()
 
