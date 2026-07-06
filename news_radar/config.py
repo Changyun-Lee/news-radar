@@ -34,6 +34,7 @@ class Settings:
     dart_lookback_days: int
     stage1_model: str
     stage2_model: str
+    distill_model: str
     max_llm_calls_per_run: int
     min_send_importance: int
     mentor_shared_hours: int
@@ -87,6 +88,7 @@ def load_settings() -> Settings:
         dart_lookback_days=env_int("DART_LOOKBACK_DAYS", 2),
         stage1_model=env_str("STAGE1_MODEL", "google/gemini-2.5-flash-lite"),
         stage2_model=env_str("STAGE2_MODEL", "google/gemini-2.5-flash"),
+        distill_model=env_str("DISTILL_MODEL", "google/gemini-3.5-flash"),
         max_llm_calls_per_run=env_int("MAX_LLM_CALLS_PER_RUN", 40),
         min_send_importance=env_int("MIN_SEND_IMPORTANCE", 4),
         mentor_shared_hours=env_int("MENTOR_SHARED_HOURS", 48),

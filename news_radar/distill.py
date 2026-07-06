@@ -47,7 +47,7 @@ def main() -> None:
         store.close()
     current = settings.criteria_file.read_text(encoding="utf-8")
     payload: JsonObject = {
-        "model": settings.stage2_model,
+        "model": settings.distill_model,
         "messages": [
             {
                 "role": "system",

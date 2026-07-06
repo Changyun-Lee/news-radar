@@ -17,6 +17,7 @@ jobs:
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       STAGE2_MODEL: ${{ secrets.STAGE2_MODEL }}
+      DISTILL_MODEL: ${{ secrets.DISTILL_MODEL }}
     steps:
       - uses: actions/checkout@v4
       - name: Distill criteria
