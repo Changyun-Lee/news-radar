@@ -5,6 +5,10 @@ import os
 from pathlib import Path
 
 
+class SettingsConfigError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class Company:
     name: str
@@ -38,6 +42,8 @@ class Settings:
     data_dir: Path
     companies_file: Path
     overseas_queries_file: Path
+    telegram_channels_file: Path
+    breaking_keywords_file: Path
     criteria_file: Path
 
 
@@ -65,7 +71,7 @@ def env_str(name: str, default: str = "") -> str:
 def load_settings() -> Settings:
     first_run_mode = os.getenv("FIRST_RUN_MODE", "seed").strip().lower()
     if first_run_mode not in {"seed", "notify"}:
-        raise RuntimeError("FIRST_RUN_MODE must be 'seed' or 'notify'")
+        raise SettingsConfigError("FIRST_RUN_MODE must be 'seed' or 'notify'")
     return Settings(
         naver_client_id=env_str("NAVER_CLIENT_ID"),
         naver_client_secret=env_str("NAVER_CLIENT_SECRET"),
@@ -85,6 +91,8 @@ def load_settings() -> Settings:
         data_dir=Path(os.getenv("DATA_DIR", "data")),
         companies_file=Path(os.getenv("COMPANIES_FILE", "config/companies.txt")),
         overseas_queries_file=Path(os.getenv("OVERSEAS_QUERIES_FILE", "config/overseas_queries.txt")),
+        telegram_channels_file=Path(os.getenv("TELEGRAM_CHANNELS_FILE", "config/telegram_channels.txt")),
+        breaking_keywords_file=Path(os.getenv("BREAKING_KEYWORDS_FILE", "config/breaking_keywords.txt")),
         criteria_file=Path(os.getenv("CRITERIA_FILE", "prompts/criteria_ko.md")),
     )
 
@@ -97,13 +105,13 @@ def load_companies(path: Path) -> list[Company]:
             continue
         parts = [part.strip() for part in line.split("|")]
         if not parts or not parts[0]:
-            raise RuntimeError(f"Missing company name at {path}:{line_no}")
+            raise SettingsConfigError(f"Missing company name at {path}:{line_no}")
         aliases_raw = parts[1] if len(parts) > 1 and parts[1] else parts[0]
         aliases = tuple(dict.fromkeys(alias.strip() for alias in aliases_raw.split(",") if alias.strip()))
         note = parts[2] if len(parts) > 2 else ""
         companies.append(Company(name=parts[0], aliases=aliases or (parts[0],), note=note))
     if not companies:
-        raise RuntimeError(f"No companies loaded from {path}")
+        raise SettingsConfigError(f"No companies loaded from {path}")
     return companies
 
 
@@ -115,8 +123,8 @@ def load_overseas_queries(path: Path) -> list[OverseasQuery]:
             continue
         parts = [part.strip() for part in line.split("|", maxsplit=1)]
         if len(parts) != 2 or not parts[0] or not parts[1]:
-            raise RuntimeError(f"Expected 'stream | query' at {path}:{line_no}")
+            raise SettingsConfigError(f"Expected 'stream | query' at {path}:{line_no}")
         queries.append(OverseasQuery(stream=parts[0], query=parts[1]))
     if not queries:
-        raise RuntimeError(f"No overseas queries loaded from {path}")
+        raise SettingsConfigError(f"No overseas queries loaded from {path}")
     return queries

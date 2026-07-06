@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 from urllib import parse, request
 import xml.etree.ElementTree as ET
 
@@ -11,6 +11,9 @@ from .config import OverseasQuery, Settings, load_overseas_queries, load_setting
 from .console import configure_utf8_output
 from .models import CollectionResult, Item
 from .text import clean_text, parse_pub_date
+
+if TYPE_CHECKING:
+    from .store import SeenStore
 
 
 GOOGLE_NEWS_URL: Final = "https://news.google.com/rss/search"
@@ -129,7 +132,7 @@ def collect_query(query: OverseasQuery, blocked_domains: tuple[str, ...]) -> Ove
     return parse_rss(query.stream, fetch_rss(query.query), blocked_domains)
 
 
-def collect_overseas(settings: Settings) -> CollectionResult:
+def collect_overseas(settings: Settings, store: SeenStore | None = None) -> CollectionResult:
     items: list[Item] = []
     blocked_domains = load_overseas_source_blocklist()
     for query in load_overseas_queries(settings.overseas_queries_file):

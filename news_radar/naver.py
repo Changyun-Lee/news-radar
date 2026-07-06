@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from .config import Company, Settings, load_companies
 from .http import get_json
 from .models import CollectionResult, Item, JsonObject, JsonValue
 from .text import clean_text, parse_pub_date
+
+if TYPE_CHECKING:
+    from .store import SeenStore
+
+
+class NaverConfigError(RuntimeError):
+    pass
 
 
 def text_field(raw: JsonObject, key: str) -> str:
@@ -36,7 +45,7 @@ class NaverNewsClient:
             return self._search_direct(query)
         if self.settings.kskill_proxy_base_url:
             return self._search_proxy(query)
-        raise RuntimeError("Naver is not configured")
+        raise NaverConfigError("Naver is not configured")
 
     def _search_direct(self, query: str) -> list[JsonObject]:
         data = get_json(
@@ -57,7 +66,7 @@ class NaverNewsClient:
         return object_items(data.get("items"))
 
 
-def collect_domestic(settings: Settings) -> CollectionResult:
+def collect_domestic(settings: Settings, store: SeenStore | None = None) -> CollectionResult:
     client = NaverNewsClient(settings)
     if not client.enabled():
         print("[domestic:skip] Naver credentials/proxy missing", flush=True)

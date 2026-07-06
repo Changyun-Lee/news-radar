@@ -16,17 +16,23 @@ from .naver import collect_domestic
 from .records import skip_record, stage1_record, stage2_record
 from .store import SeenStore
 from .telegram import TelegramClient
+from .telegram_channels import collect_tgchannel
 
 
-Collector = Callable[[Settings], CollectionResult]
+Collector = Callable[[Settings, SeenStore], CollectionResult]
 COLLECTORS: Final[dict[Source, Collector]] = {
     "domestic": collect_domestic,
     "overseas": collect_overseas,
+    "tgchannel": collect_tgchannel,
 }
 ALL_SOURCES: Final = "all"
 
 
-@dataclass(slots=True)
+class UnknownSourceError(ValueError):
+    pass
+
+
+@dataclass(slots=True)  # noqa: MUTABLE_OK
 class RunStats:
     collected: int = 0
     new: int = 0
@@ -146,14 +152,14 @@ def selected_sources(raw_source: str) -> tuple[Source, ...]:
         return tuple(COLLECTORS)
     if raw_source in COLLECTORS:
         return (raw_source,)
-    raise ValueError(f"Unknown source: {raw_source}")
+    raise UnknownSourceError(f"Unknown source: {raw_source}")
 
 
-def collect_source(source: Source, settings: Settings) -> CollectionResult:
+def collect_source(source: Source, settings: Settings, store: SeenStore) -> CollectionResult:
     collector = COLLECTORS.get(source)
     if collector is None:
-        raise ValueError(f"Unknown source: {source}")
-    return collector(settings)
+        raise UnknownSourceError(f"Unknown source: {source}")
+    return collector(settings, store)
 
 
 def run_once(raw_source: str) -> RunStats:
@@ -181,7 +187,7 @@ def run_once(raw_source: str) -> RunStats:
         for source in selected_sources(raw_source):
             is_first_run = store.is_first_run(source)
             seed_only = is_first_run and settings.first_run_mode == "seed"
-            result = collect_source(source, settings)
+            result = collect_source(source, settings, store)
             stats.collected += len(result.items)
             for item in result.items:
                 process_item(runtime, item, seed_only, stats)
