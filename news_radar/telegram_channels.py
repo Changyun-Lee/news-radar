@@ -270,7 +270,11 @@ def split_suppression_titles(text: str) -> tuple[str, ...]:
     lines = [SPACE_RE.sub(" ", line).strip() for line in text.splitlines() if line.strip()]
     url_lines = [line for line in lines if URL_RE.search(line)]
     if len(url_lines) < 2:
-        return () if not lines else (_cap_title(lines[0]),)
+        if not lines:
+            return ()
+        # 단독 공유도 URL은 제목에서 제거 — URL만 남으면 매칭 가치가 없어 레코드 생략
+        title = _cap_title(URL_RE.sub(" ", lines[0]))
+        return (title,) if title else ()
     titles: list[str] = []
     for line in url_lines:
         title = _cap_title(URL_RE.sub(" ", line))
