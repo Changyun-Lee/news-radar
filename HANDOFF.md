@@ -1,19 +1,21 @@
 완료한 것
-- DART 공시 수집기 news_radar/dart.py 추가: list.json 조회, corp_code JSON 캐시, 보고서 제외 필터, Item 매핑.
-- worker COLLECTORS에 source=dart 등록 및 skip_stage1 플래그 추가.
-- Settings에 API_K_DART/DART_API_KEY, DART_LOOKBACK_DAYS 로드 추가.
-- domestic.yml에 API_K_DART env와 DART 별도 실행 스텝(if: always()) 추가.
-- README.md에 DART Secret, 캐시, 제외 규칙, 비상장 스킵 규칙 추가.
+- `config/telegram_channels.txt`에 `kyobo-shared | kyobofnbcosmetic | suppress` 추가.
+- `mode=suppress` 파서 허용 및 tgchannel 수집/페이지네이션/high-water/finalize 흐름 재사용.
+- suppress 메시지를 URL 포함 줄 2개 이상이면 URL 줄 단위 제목으로 분해, 아니면 첫 줄 120자로 저장.
+- suppress 레코드를 `seen_items` dedupe 후 `judgments`에 `source=tgsuppress`, `decision=mentor_shared`, `sent=0`으로 기록.
+- `MENTOR_SHARED_HOURS` 기본 48, `MENTOR_SHARED_LIMIT` 기본 30 추가 및 Actions env 연결.
+- worker 시작 시 최근 사수 공유 제목을 1회 조회해 모든 source stage2 payload에 `mentor_shared_recent`로 주입.
+- README에 suppress 모드와 새 env 2개 설명 추가.
 
 결정 근거
-- DART는 감시 기업 공식 공시라 stage1 관련성 필터를 생략하고 stage2 판정/중복/시드/발송 로직은 기존 worker를 재사용.
-- corpCode.zip은 캐시 미스 기업이 있을 때만 내려받고 data/dart_corp_codes.json에 기업명별 corp_code를 저장.
-- 미해결 기업은 빈 corp_code로 캐시에 남겨 반복 실행마다 zip을 받지 않음.
-- DART API 키는 환경변수에서만 읽고 로그/설정/코드에 기록하지 않음.
+- suppress 채널은 `CollectionResult.items`에 넣지 않아 judge/send 경로에 진입하지 않음.
+- dedupe_key는 제목 casefold 후 공백/하이픈 제거 문자열의 sha256으로 저장해 수정/재게시 중복을 차단.
+- 기존 `judgments`/30일 prune/stream 스코프를 재사용해 별도 테이블 없이 억제 이력을 격리.
+- high-water는 suppress 레코드 저장 뒤 기존 finalize가 전진시키도록 candidate mark만 넘김.
 
 미해결 쟁점
-- OpenRouter/Telegram 실발송 검증은 하지 않음.
-- 운영 data/는 임시 DATA_DIR 검증 후 git status 변경 없음 확인.
+- 운영 OpenRouter/Telegram 실발송은 수행하지 않음.
+- 1회차 검증 중 beautylog 공개 페이지가 1회 타임아웃됐고 2회차에는 정상 fetch됨.
 
 다음 작업
 - Claude Code에서 변경 파일 리뷰 후 커밋 필요.

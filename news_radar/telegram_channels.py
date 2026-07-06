@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from html.parser import HTMLParser
 from pathlib import Path
 import re
@@ -10,19 +11,21 @@ from urllib import parse
 
 from .config import Settings, load_companies
 from .http import get_text
-from .models import CollectionMark, CollectionResult, Item, ItemMark
-from .store import SeenStore
+from .models import CollectionMark, CollectionResult, Item, ItemMark, SuppressionRecord
+from .store import MENTOR_SHARED_SOURCE, SeenStore
 from .tgchannel_keywords import keyword_gate_allows
 from .tgchannel_state import read_high_water
 
 
-ChannelMode = Literal["llm", "keyword"]
+ChannelMode = Literal["llm", "keyword", "suppress"]
 
 TELEGRAM_WEB_URL: Final = "https://t.me/s"
 USER_AGENT: Final = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 news-radar/1.0"
 MAX_PAGES_PER_CHANNEL: Final = 50
 PAGE_DELAY_SECONDS: Final = 0.4
 SPACE_RE: Final = re.compile(r"[ \t\r\f\v]+")
+URL_RE: Final = re.compile(r"https?://\S+")
+SUPPRESSION_DEDUPE_RE: Final = re.compile(r"[\s-]+")
 
 
 class TelegramChannelConfigError(RuntimeError):
@@ -41,6 +44,18 @@ class TelegramMessage:
     message_id: int
     text: str
     published_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ChannelCollection:
+    items: tuple[Item, ...]
+    fetched: int
+    gated_out: int
+    suppress_records: int
+    suppress_duplicates: int
+    attempted: bool
+    candidate_mark: CollectionMark | None
+    item_marks: tuple[ItemMark, ...]
 
 
 class TelegramPageParser(HTMLParser):
@@ -148,11 +163,15 @@ def _strip_comment(raw_line: str) -> str:
 
 def _parse_mode(raw_mode: str, path: Path, line_no: int) -> ChannelMode:
     mode = raw_mode.strip().lower()
-    if mode == "llm":
-        return "llm"
-    if mode == "keyword":
-        return "keyword"
-    raise TelegramChannelConfigError(f"Expected mode 'llm' or 'keyword' at {path}:{line_no}")
+    match mode:
+        case "llm":
+            return "llm"
+        case "keyword":
+            return "keyword"
+        case "suppress":
+            return "suppress"
+        case _:
+            raise TelegramChannelConfigError(f"Expected mode 'llm', 'keyword', or 'suppress' at {path}:{line_no}")
 
 
 def load_telegram_channels(path: Path) -> tuple[TelegramChannel, ...]:
@@ -239,29 +258,110 @@ def _message_to_item(channel: TelegramChannel, message: TelegramMessage, seed: b
     )
 
 
+def _record_url(channel: TelegramChannel, message: TelegramMessage) -> str:
+    return f"https://t.me/{channel.handle}/{message.message_id}"
+
+
+def _cap_title(title: str) -> str:
+    return SPACE_RE.sub(" ", title).strip()[:120].rstrip()
+
+
+def split_suppression_titles(text: str) -> tuple[str, ...]:
+    lines = [SPACE_RE.sub(" ", line).strip() for line in text.splitlines() if line.strip()]
+    url_lines = [line for line in lines if URL_RE.search(line)]
+    if len(url_lines) < 2:
+        return () if not lines else (_cap_title(lines[0]),)
+    titles: list[str] = []
+    for line in url_lines:
+        title = _cap_title(URL_RE.sub(" ", line))
+        if title:
+            titles.append(title)
+    return tuple(titles)
+
+
+def _suppression_dedupe_key(title: str) -> str:
+    normalized = SUPPRESSION_DEDUPE_RE.sub("", title.casefold())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _record_suppressions(channel: TelegramChannel, store: SeenStore, messages: list[TelegramMessage]) -> tuple[int, int]:
+    records = 0
+    duplicates = 0
+    for message in messages:
+        for title in split_suppression_titles(message.text):
+            record = SuppressionRecord(
+                source=MENTOR_SHARED_SOURCE,
+                dedupe_key=_suppression_dedupe_key(title),
+                stream=channel.stream,
+                title=title,
+                url=_record_url(channel, message),
+                published_at=message.published_at,
+            )
+            if store.record_suppression(record):
+                records += 1
+            else:
+                duplicates += 1
+    return records, duplicates
+
+
 def _collect_channel(
     channel: TelegramChannel,
     store: SeenStore,
     keywords: tuple[str, ...],
-) -> tuple[list[Item], int, int, bool, CollectionMark | None, tuple[ItemMark, ...]]:
+) -> ChannelCollection:
     high_water = read_high_water(store, channel.handle)
     messages, highest_message_id, completed, attempted = _fetch_pages(channel, high_water)
     candidates = messages if high_water is None else [message for message in messages if message.message_id > high_water]
-    fetched_pairs = [
-        (message, item)
-        for message in candidates
-        if (item := _message_to_item(channel, message, high_water is None)) is not None
-    ]
+    candidate_mark = CollectionMark(channel.handle, highest_message_id) if completed and highest_message_id is not None else None
     match channel.mode:
         case "llm":
+            fetched_pairs = [
+                (message, item)
+                for message in candidates
+                if (item := _message_to_item(channel, message, high_water is None)) is not None
+            ]
             passed_pairs = fetched_pairs
+            return ChannelCollection(
+                items=tuple(item for _, item in passed_pairs),
+                fetched=len(fetched_pairs),
+                gated_out=0,
+                suppress_records=0,
+                suppress_duplicates=0,
+                attempted=attempted,
+                candidate_mark=candidate_mark,
+                item_marks=tuple(ItemMark(item.url, channel.handle, message.message_id) for message, item in passed_pairs),
+            )
         case "keyword":
+            fetched_pairs = [
+                (message, item)
+                for message in candidates
+                if (item := _message_to_item(channel, message, high_water is None)) is not None
+            ]
             passed_pairs = [(message, item) for message, item in fetched_pairs if keyword_gate_allows(message.text, keywords)]
+            return ChannelCollection(
+                items=tuple(item for _, item in passed_pairs),
+                fetched=len(fetched_pairs),
+                gated_out=len(fetched_pairs) - len(passed_pairs),
+                suppress_records=0,
+                suppress_duplicates=0,
+                attempted=attempted,
+                candidate_mark=candidate_mark,
+                item_marks=tuple(ItemMark(item.url, channel.handle, message.message_id) for message, item in passed_pairs),
+            )
+        case "suppress":
+            records, duplicates = _record_suppressions(channel, store, candidates)
+            return ChannelCollection(
+                items=(),
+                fetched=len(candidates),
+                gated_out=0,
+                suppress_records=records,
+                suppress_duplicates=duplicates,
+                attempted=attempted,
+                candidate_mark=candidate_mark,
+                item_marks=(),
+            )
         case unreachable:
             assert_never(unreachable)
-    candidate_mark = CollectionMark(channel.handle, highest_message_id) if completed and highest_message_id is not None else None
-    item_marks = tuple(ItemMark(item.url, channel.handle, message.message_id) for message, item in passed_pairs)
-    return [item for _, item in passed_pairs], len(fetched_pairs), len(fetched_pairs) - len(passed_pairs), attempted, candidate_mark, item_marks
 
 
 def collect_tgchannel(settings: Settings, store: SeenStore) -> CollectionResult:
@@ -272,15 +372,26 @@ def collect_tgchannel(settings: Settings, store: SeenStore) -> CollectionResult:
     candidate_marks: list[CollectionMark] = []
     item_marks: list[ItemMark] = []
     for channel in channels:
-        channel_items, fetched, gated_out, channel_attempted, candidate_mark, channel_item_marks = _collect_channel(channel, store, keywords)
-        attempted = attempted or channel_attempted
-        if candidate_mark is not None:
-            candidate_marks.append(candidate_mark)
-        item_marks.extend(channel_item_marks)
-        print(
-            f"[tgchannel] stream={channel.stream} "
-            f"fetched={fetched} gated_out={gated_out} passed={len(channel_items)}",
-            flush=True,
-        )
-        items.extend(channel_items)
+        channel_result = _collect_channel(channel, store, keywords)
+        attempted = attempted or channel_result.attempted
+        if channel_result.candidate_mark is not None:
+            candidate_marks.append(channel_result.candidate_mark)
+        item_marks.extend(channel_result.item_marks)
+        match channel.mode:
+            case "llm" | "keyword":
+                print(
+                    f"[tgchannel] stream={channel.stream} "
+                    f"fetched={channel_result.fetched} gated_out={channel_result.gated_out} "
+                    f"passed={len(channel_result.items)}",
+                    flush=True,
+                )
+            case "suppress":
+                print(
+                    f"[tgchannel] stream={channel.stream} mode=suppress records={channel_result.suppress_records} "
+                    f"duplicates={channel_result.suppress_duplicates} fetched={channel_result.fetched}",
+                    flush=True,
+                )
+            case unreachable:
+                assert_never(unreachable)
+        items.extend(channel_result.items)
     return CollectionResult(items, attempted=attempted, candidate_marks=tuple(candidate_marks), item_marks=tuple(item_marks))

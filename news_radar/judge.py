@@ -96,12 +96,13 @@ class OpenRouterJudge:
         item: Item,
         stage1: Stage1Result,
         recent_history: list[JsonObject],
+        mentor_shared_recent: list[str],
         criteria_text: str,
         limiter: CallLimiter,
     ) -> Stage2Result:
         result = self._chat_json(
             self.settings.stage2_model,
-            self._stage2_messages(item, stage1, recent_history, criteria_text),
+            self._stage2_messages(item, stage1, recent_history, mentor_shared_recent, criteria_text),
             JUDGMENT_SCHEMA,
             limiter,
         )
@@ -197,6 +198,7 @@ class OpenRouterJudge:
         item: Item,
         stage1: Stage1Result,
         recent_history: list[JsonObject],
+        mentor_shared_recent: list[str],
         criteria_text: str,
     ) -> list[JsonObject]:
         payload: JsonObject = {
@@ -207,6 +209,7 @@ class OpenRouterJudge:
                 "risk_flags": list(stage1.risk_flags),
             },
             "recent_history": recent_history,
+            "mentor_shared_recent": mentor_shared_recent,
         }
         return [
             {
@@ -229,6 +232,7 @@ class OpenRouterJudge:
                     "주체가 불명확하면 제목의 표현을 그대로 유지. "
                     "telegram_title_ko에도 동일 원칙을 적용하라. "
                     "최근 이력과 같은 이슈이면 duplicate_of_issue_key를 채우고 novelty_score를 낮게 준다.\n\n"
+                    "mentor_shared_recent는 이미 방에 공유된 뉴스 목록이다. 같은 사안이면 duplicate_of_issue_key를 채우고 novelty_score를 낮게 주라.\n\n"
                     f"입력:\n{json.dumps(payload, ensure_ascii=False)}"
                 ),
             },

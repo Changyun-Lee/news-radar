@@ -23,6 +23,8 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       SEND_TELEGRAM: ${{ secrets.SEND_TELEGRAM || '1' }}
       MIN_SEND_IMPORTANCE: ${{ secrets.MIN_SEND_IMPORTANCE || '4' }}
+      MENTOR_SHARED_HOURS: ${{ secrets.MENTOR_SHARED_HOURS || '48' }}
+      MENTOR_SHARED_LIMIT: ${{ secrets.MENTOR_SHARED_LIMIT || '30' }}
       STAGE1_MODEL: ${{ secrets.STAGE1_MODEL }}
       STAGE2_MODEL: ${{ secrets.STAGE2_MODEL }}
       RUN_ONCE: "1"

@@ -67,6 +67,7 @@ class Runtime:
     judge: OpenRouterJudge
     limiter: CallLimiter
     criteria_text: str
+    mentor_shared_recent: list[str]
 
 
 def record_judge_error(stats: RunStats, item: Item, stage: int, exc: RuntimeError | OSError) -> None:
@@ -124,7 +125,14 @@ def process_item(runtime: Runtime, item: Item, seed_only: bool, stats: RunStats)
         return True
     history = runtime.store.get_recent_history(item.source, item.stream, 14, 12)
     try:
-        stage2 = runtime.judge.judge_article(item, stage1, history, runtime.criteria_text, runtime.limiter)
+        stage2 = runtime.judge.judge_article(
+            item,
+            stage1,
+            history,
+            runtime.mentor_shared_recent,
+            runtime.criteria_text,
+            runtime.limiter,
+        )
     except CallLimitReached:
         stats.budget_skipped += 1
         print(f"[budget:skip] {item.source} | {item.stream} | stage=2 | {item.title}", flush=True)
@@ -194,6 +202,7 @@ def run_once(raw_source: str) -> RunStats:
             stats.errors += 1
             print(f"[feedback:error] {exc}", flush=True)
         criteria_text = settings.criteria_file.read_text(encoding="utf-8")
+        mentor_shared_recent = store.get_mentor_shared_recent(settings.mentor_shared_hours, settings.mentor_shared_limit)
         runtime = Runtime(
             settings=settings,
             store=store,
@@ -201,6 +210,7 @@ def run_once(raw_source: str) -> RunStats:
             judge=OpenRouterJudge(settings),
             limiter=limiter,
             criteria_text=criteria_text,
+            mentor_shared_recent=mentor_shared_recent,
         )
         for source in selected_sources(raw_source):
             is_first_run = store.is_first_run(source)
